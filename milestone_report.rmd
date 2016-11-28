@@ -19,6 +19,7 @@ library(SnowballC)
 library(ggplot2)
 library(RWeka)
 library(RWekajars)
+library(plyr)
 ```
 
 ## Getting the data 
@@ -72,22 +73,13 @@ kable(df,caption="A test table",
 ```{r corpus}
 set.seed(2566)  # Ensure reproducibility 
 
-sampleSize <- 0.1 # set sample size to 1%
+sampleSize <- 0.01 # set sample size to 1%
 docs <- c(sample(blogs, length(blogs) * sampleSize),
                  sample(news, length(news) * sampleSize),
                  sample(twitter, length(twitter) * sampleSize))
 
-# convert string to vector of words
-dat2 <- unlist(strsplit(docs, split=", "))
-# find indices of words with non-ASCII characters
-dat3 <- grep("dat2", iconv(dat2, "latin1", "ASCII", sub="dat2"))
-# subset original vector of words to exclude words with non-ASCII char
-dat4 <- dat2[-dat3]
-# convert vector back to a string
-docs <- paste(dat4, collapse = ", ")
-  
+
 corpus <- Corpus(VectorSource(docs))
-inspect(corpus)
 rm(blogs, news, twitter)
 rm(docs)
 ```
@@ -96,6 +88,15 @@ rm(docs)
 ```{r shape_corpus}
 
 # clean up the corpus (function calls are obvious)
+
+
+# remove URLs
+removeURL <- function(x) gsub("http[[:alnum:]]*", "", x)
+corpus <- tm_map(corpus, content_transformer(removeURL))  
+
+removeSpecial <- function(x) gsub("[^[:print:]]+", "", x)
+corpus <- tm_map(corpus, content_transformer(removeSpecial))  
+
 corpus <- tm_map(corpus, content_transformer(tolower))
 corpus <- tm_map(corpus, removePunctuation)
 corpus <- tm_map(corpus, removeNumbers)
@@ -107,55 +108,72 @@ bannedWords <- readLines("full-list-of-bad-words-banned-by-google-txt-file_2013_
 corpus <- tm_map(corpus, removeWords, bannedWords)
 corpus <- tm_map(corpus, stripWhitespace)
 corpus <- tm_map(corpus, PlainTextDocument)
-
-writeCorpus(corpus, path = ".\\Corpus", filenames = "Corpus.txt")
-
-dtm <- DocumentTermMatrix(corpus)
-bigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min=2, max=2))
-bigramDTM <- DocumentTermMatrix(corpus, control = list(tokenize = bigramTokenizer))
-
-trigram <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
-trigramDTM <- DocumentTermMatrix(corpus, control = list(tokenize = trigramTokenizer))
-
-dtm2 <- as.matrix(dtm)
-
-frequency <- colSums(dtm2)
-frequency <- sort(frequency, decreasing=TRUE)
-
-head(frequency)
-
-uniFreq <- data.frame(word = names(frequency), freq = frequency)
-
 ```
 
-```{r Ngrams}
-options(mc.cores=1)
-
-
-#dtm2 <- as.matrix(bigram)
-
-#frequency <- colSums(dtm2)
-#frequency <- sort(frequency, decreasing=TRUE)
-
-#head(frequency)
-
-#biFreq <- data.frame(word = names(frequency), freq = frequency)
-#makePlot(biFreq,20,"A LABEL","Frequency","green")
-
-
-
-
-```
 
 ```{r histograms}
-makePlot <- function(data, num,xLabel,yLabel,colour) {
+makePlot <- function(data, num,xLabel,yLabel,title,colour) {
   ggplot(data[1:num,], aes(reorder(word, -freq), freq)) +
          labs(x = xLabel, y = yLabel) +
+         ggtitle(title) +      
          theme(axis.text.x = element_text(angle = 60, size = 12, hjust = 1)) +
          geom_bar(stat = "identity", fill = I(colour))
 }
+```
 
-makePlot(uniFreq,20,"A LABEL","Frequency","green")
 
+
+```{r build_Ngrams}
+N1GramTokenizer <- function(x) NGramTokenizer(x = x, control = Weka_control(min = 1, max = 1))
+N2GramTokenizer <- function(x) NGramTokenizer(x = x, control = Weka_control(min = 2, max = 2))
+N3GramTokenizer <- function(x) NGramTokenizer(x = x, control = Weka_control(min = 3, max = 3))
+N1GramMatrix <- TermDocumentMatrix(x = corpus, control = list(tokenize = N1GramTokenizer))
+N2GramMatrix <- TermDocumentMatrix(x = corpus, control = list(tokenize = N2GramTokenizer))
+N3GramMatrix <- TermDocumentMatrix(x = corpus, control = list(tokenize = N3GramTokenizer))
+#N1GramMatrix <- removeSparseTerms(N1GramMatrix, 0.999)
+#N2GramMatrix <- removeSparseTerms(N2GramMatrix, 0.9999)
+#N3GramMatrix <- removeSparseTerms(N3GramMatrix, 0.9999)
+```
+
+
+
+```{r Unigram}
+## convert docmatrix to a dataframe with word and freq
+df_words <- as.data.frame(slam::row_sums(N1GramMatrix, na.rm=T))
+colnames(df_words)<- "freq"
+df_words <- cbind(word = rownames(df_words),df_words)
+rownames(df_words) <- NULL
+
+## sort the dataframe by most used words
+
+uniFreq <- arrange(df_words,desc(freq))
+makePlot(uniFreq,20,"Words","Frequency","Top 20 Unigram Words","green")
+```
+
+
+```{r Bigram}
+## convert docmatrix to a dataframe with word and freq
+df_words <- as.data.frame(slam::row_sums(N2GramMatrix, na.rm=T))
+colnames(df_words)<- "freq"
+df_words <- cbind(word = rownames(df_words),df_words)
+rownames(df_words) <- NULL
+
+## sort the dataframe by most used words
+
+BiFreq <- arrange(df_words,desc(freq))
+makePlot(BiFreq,20,"Words","Frequency","Top 20 Bigram Words","blue")
+```
+
+```{r Trigram}
+## convert docmatrix to a dataframe with word and freq
+df_words <- as.data.frame(slam::row_sums(N3GramMatrix, na.rm=T))
+colnames(df_words)<- "freq"
+df_words <- cbind(word = rownames(df_words),df_words)
+rownames(df_words) <- NULL
+
+## sort the dataframe by most used words
+
+TriFreq <- arrange(df_words,desc(freq))
+makePlot(TriFreq,20,"Words","Frequency","Top 20 Trigram Words","yellow")
 ```
 
